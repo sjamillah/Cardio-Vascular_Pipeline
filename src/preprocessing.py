@@ -145,96 +145,54 @@ def preprocess_single_datapoint(data_dict):
         # Create a one-row dataframe from the input dictionary
         df = pd.DataFrame([data_dict])
         
-        # CRITICAL FIX: We need to properly handle 'cholesterol' and 'gluc' features
-        # In model training, these are one-hot encoded, but in prediction they remain numeric
-        
-        # Process cholesterol - convert to one-hot encoding
-        if 'cholesterol' in df.columns:
-            cholesterol_value = df['cholesterol'].iloc[0]
-            # Create dummy variables (similar to pd.get_dummies with drop_first=False)
-            df['cholesterol_1'] = (df['cholesterol'] == 1).astype(int)
-            df['cholesterol_2'] = (df['cholesterol'] == 2).astype(int)
-            df['cholesterol_3'] = (df['cholesterol'] == 3).astype(int)
-            # Drop original column
-            df.drop('cholesterol', axis=1, inplace=True)
-        else:
-            # Add default dummy columns if feature is missing
-            df['cholesterol_1'] = 1  # Default to normal cholesterol
-            df['cholesterol_2'] = 0
-            df['cholesterol_3'] = 0
-        
-        # Process glucose - convert to one-hot encoding
-        if 'gluc' in df.columns:
-            gluc_value = df['gluc'].iloc[0]
-            # Create dummy variables
-            df['gluc_1'] = (df['gluc'] == 1).astype(int)
-            df['gluc_2'] = (df['gluc'] == 2).astype(int)
-            df['gluc_3'] = (df['gluc'] == 3).astype(int)
-            # Drop original column
-            df.drop('gluc', axis=1, inplace=True)
-        else:
-            # Add default dummy columns if feature is missing
-            df['gluc_1'] = 1  # Default to normal glucose
-            df['gluc_2'] = 0
-            df['gluc_3'] = 0
-        
-        # Process cultural_belief_score
-        if 'cultural_belief_score' in df.columns:
-            df['cultural_belief_score_Never'] = (df['cultural_belief_score'] == 'Never').astype(int)
-            df['cultural_belief_score_Occasionally'] = (df['cultural_belief_score'] == 'Occasionally').astype(int)
-            df['cultural_belief_score_Frequently'] = (df['cultural_belief_score'] == 'Frequently').astype(int)
-            df.drop('cultural_belief_score', axis=1, inplace=True)
-        else:
-            # Add default dummy columns if feature is missing
-            df['cultural_belief_score_Never'] = 1  # Default to "Never"
-            df['cultural_belief_score_Occasionally'] = 0
-            df['cultural_belief_score_Frequently'] = 0
-        
-        # Process treatment_adherence
-        if 'treatment_adherence' in df.columns:
-            df['treatment_adherence_Low'] = (df['treatment_adherence'] == 'Low').astype(int)
-            df['treatment_adherence_Medium'] = (df['treatment_adherence'] == 'Medium').astype(int)
-            df['treatment_adherence_High'] = (df['treatment_adherence'] == 'High').astype(int)
-            df.drop('treatment_adherence', axis=1, inplace=True)
-        else:
-            # Add default dummy columns if feature is missing
-            df['treatment_adherence_Low'] = 1  # Default to "Low"
-            df['treatment_adherence_Medium'] = 0
-            df['treatment_adherence_High'] = 0
-            
-        # Process distance_to_healthcare
-        if 'distance_to_healthcare' in df.columns:
-            df['distance_to_healthcare_Near'] = (df['distance_to_healthcare'] == 'Near').astype(int)
-            df['distance_to_healthcare_Moderate'] = (df['distance_to_healthcare'] == 'Moderate').astype(int)
-            df['distance_to_healthcare_Far'] = (df['distance_to_healthcare'] == 'Far').astype(int)
-            df.drop('distance_to_healthcare', axis=1, inplace=True)
-        else:
-            # Add default dummy columns if feature is missing
-            df['distance_to_healthcare_Near'] = 1  # Default to "Near"
-            df['distance_to_healthcare_Moderate'] = 0
-            df['distance_to_healthcare_Far'] = 0
-        
-        # Define expected columns for model input - MUST match what the model was trained with
-        expected_columns = [
+        # Define the set of relevant features we want to maintain
+        relevant_features = [
             'age', 'height', 'weight', 'gender', 'ap_hi', 'ap_lo',
-            'cholesterol_1', 'cholesterol_2', 'cholesterol_3',
-            'gluc_1', 'gluc_2', 'gluc_3',
-            'cultural_belief_score_Never', 'cultural_belief_score_Occasionally', 'cultural_belief_score_Frequently',
-            'treatment_adherence_Low', 'treatment_adherence_Medium', 'treatment_adherence_High',
-            'distance_to_healthcare_Near', 'distance_to_healthcare_Moderate', 'distance_to_healthcare_Far'
+            'cholesterol', 'gluc', 'cultural_belief_score',
+            'treatment_adherence', 'distance_to_healthcare'
         ]
         
-        # Ensure all expected columns exist
-        for col in expected_columns:
-            if col not in df.columns:
-                logger.warning(f"Missing column {col} in input data. Adding with default value 0.")
-                df[col] = 0
+        # Ensure all required features exist in input
+        for feature in relevant_features:
+            if feature not in df.columns:
+                logger.warning(f"Missing feature: {feature}. Adding with default values.")
+                if feature == 'cultural_belief_score':
+                    df[feature] = 'Never'
+                elif feature == 'treatment_adherence':
+                    df[feature] = 'Low'
+                elif feature == 'distance_to_healthcare':
+                    df[feature] = 'Near'
+                else:
+                    df[feature] = 0
         
-        # Reorder and select only expected columns
-        df = df[expected_columns]
+        # Use pd.get_dummies with drop_first=True to match model expectation
+        # This is crucial - this is what caused our mismatch
+        df_encoded = pd.get_dummies(df, columns=[
+            'cultural_belief_score', 
+            'treatment_adherence', 
+            'distance_to_healthcare'
+        ], drop_first=True)
+        
+        # Expected columns after one-hot encoding
+        expected_columns = [
+            'age', 'height', 'weight', 'gender', 'ap_hi', 'ap_lo',
+            'cholesterol', 'gluc', 
+            'cultural_belief_score_Occasionally', 'cultural_belief_score_Frequently',
+            'treatment_adherence_Medium', 'treatment_adherence_High',
+            'distance_to_healthcare_Moderate', 'distance_to_healthcare_Far'
+        ]
+        
+        # Ensure all expected columns exist after encoding
+        for col in expected_columns:
+            if col not in df_encoded.columns:
+                logger.warning(f"Missing encoded column: {col}. Adding with zeros.")
+                df_encoded[col] = 0
+                
+        # Only keep expected columns in the correct order
+        df_final = df_encoded[expected_columns]
         
         # Print shape for debugging
-        print(f"Preprocessed data shape: {df.shape}, columns: {df.columns.tolist()}")
+        print(f"Preprocessed data shape: {df_final.shape}, columns: {df_final.columns.tolist()}")
         
         # Load the scaler that was used for the training data
         os.makedirs(MODELS_DIR, exist_ok=True)
@@ -244,17 +202,17 @@ def preprocess_single_datapoint(data_dict):
             try:
                 scaler = joblib.load(scaler_path)
                 # Apply scaling
-                scaled_data = scaler.transform(df)
+                scaled_data = scaler.transform(df_final)
                 print(f"Scaled data shape: {scaled_data.shape}")
                 return scaled_data
             except Exception as e:
                 logger.error(f"Error loading or applying scaler: {e}")
                 logger.warning("Using unscaled data for prediction.")
-                return df.values
+                return df_final.values
         else:
-            # If no scaler found, return the raw data (not ideal but allows for functionality)
+            # If no scaler found, return the raw data
             logger.warning("No scaler found at path: {}. Using unscaled data for prediction.".format(scaler_path))
-            return df.values
+            return df_final.values
     except Exception as e:
         logger.error(f"Error in preprocess_single_datapoint: {e}")
         raise

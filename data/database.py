@@ -20,7 +20,7 @@ def get_mongo_client():
     try:
         # Try direct connection string first - not using SRV format
         # This bypasses DNS resolution which might be causing issues
-        direct_uri = "mongodb://jssozi:J0788565007ynn@ac-ti8dfyk-shard-00-00.tzizffo.mongodb.net:27017,ac-ti8dfyk-shard-00-01.tzizffo.mongodb.net:27017,ac-ti8dfyk-shard-00-02.tzizffo.mongodb.net:27017/cardio_database?replicaSet=atlas-q84glr-shard-0&ssl=true&authSource=admin"
+        direct_uri = "mongodb://jssozi:Jynn@ac-ti8dfyk-shard-00-00.tzizffo.mongodb.net:27017,ac-ti8dfyk-shard-00-01.tzizffo.mongodb.net:27017,ac-ti8dfyk-shard-00-02.tzizffo.mongodb.net:27017/cardio_database?replicaSet=atlas-q84glr-shard-0&ssl=true&authSource=admin"
         
         # Try with minimal SSL options and allow invalid certificates for testing
         client = MongoClient(
