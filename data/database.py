@@ -5,32 +5,43 @@ import pymongo
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 import ssl
+import certifi
 import os
 from src.preprocessing import load_and_preprocess_data, preprocess_single_datapoint
 
-# MongoDB connection settings
-DB_NAME = "cardio_database"
-COLLECTION_NAME = "cardio_info"
-BATCH_COLLECTION = "upload_batches"
+# # MongoDB connection settings
+# DB_NAME = "cardio_database"
+# COLLECTION_NAME = "cardio_info"
+# BATCH_COLLECTION = "upload_batches"
 
 def get_mongo_client():
-    """Get MongoDB client connection with improved SSL handling"""
+    """
+    Get MongoDB client connection with enhanced SSL and debugging
+    """
     try:
-        # Ensure you're using the full connection string with database and options
-        MONGO_URI = "mongodb+srv://jssozi:J0788565007ynn@default-cluster.tzizffo.mongodb.net/cardio_database"
+        # MongoDB connection string
+        MONGO_URI = "mongodb+srv://jssozi:Jynn@default-cluster.tzizffo.mongodb.net/cardio_database?retryWrites=true&w=majority"
         
-        # Create client with more robust SSL and connection settings
+        # Create client with comprehensive SSL configuration
         client = MongoClient(
             MONGO_URI,
             server_api=ServerApi('1'),
-            # Increased timeout settings
-            socketTimeoutMS=30000,
-            connectTimeoutMS=30000,
-            serverSelectionTimeoutMS=30000
+            # Use certifi for CA certificates
+            tlsCAFile=certifi.where(),
+            
+            # Increased timeout and connection settings
+            socketTimeoutMS=60000,  # 60 seconds
+            connectTimeoutMS=60000,
+            serverSelectionTimeoutMS=60000,
+            
+            # Additional SSL/TLS configuration
+            tls=True,
+            tlsAllowInvalidHostnames=False,
         )
         
         # Verify the connection
         client.admin.command('ping')
+        print("Successfully connected to MongoDB!")
         return client
     
     except pymongo.errors.ConfigurationError as config_err:
@@ -39,9 +50,58 @@ def get_mongo_client():
     except pymongo.errors.NetworkTimeout as net_err:
         print(f"Network Timeout Error: {net_err}")
         raise
+    except ssl.SSLError as ssl_err:
+        print(f"SSL Error: {ssl_err}")
+        raise
     except Exception as e:
         print(f"Unexpected error connecting to MongoDB: {e}")
         raise
+
+def debug_ssl_connection():
+    """
+    Comprehensive SSL and network debugging function
+    """
+    import socket
+    import ssl
+    import certifi
+
+    try:
+        # Hostname and port from your MongoDB connection string
+        hostname = 'default-cluster.tzizffo.mongodb.net'
+        port = 27017
+
+        # Create a socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(30)  # 30-second timeout
+
+        # Create SSL context
+        context = ssl.create_default_context(cafile=certifi.where())
+        context.check_hostname = True
+        context.verify_mode = ssl.CERT_REQUIRED
+
+        # Wrap socket with SSL
+        secure_sock = context.wrap_socket(sock, server_hostname=hostname)
+
+        try:
+            # Attempt to connect
+            secure_sock.connect((hostname, port))
+            print("SSL Connection successful!")
+            
+            # Get certificate details
+            cert = secure_sock.getpeercert()
+            print("Certificate details:")
+            for key, value in cert.items():
+                print(f"{key}: {value}")
+        
+        except ssl.SSLError as ssl_err:
+            print(f"SSL Error during connection: {ssl_err}")
+        except socket.error as sock_err:
+            print(f"Socket Error: {sock_err}")
+        finally:
+            secure_sock.close()
+
+    except Exception as e:
+        print(f"Debugging Error: {e}")
 
 def ensure_db_exists():
     """Ensure indexes and connections are properly set up"""
