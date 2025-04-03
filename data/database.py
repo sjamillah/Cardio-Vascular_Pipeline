@@ -1,32 +1,68 @@
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from pymongo import MongoClient
+import pymongo
+from pymongo.mongo_client import MongoClient
+from pymongo.server_api import ServerApi
+import ssl
 import os
 from src.preprocessing import load_and_preprocess_data, preprocess_single_datapoint
 
 # MongoDB connection settings
-MONGO_URI = "mongodb+srv://jssozi:J0788565007ynn@default-cluster.tzizffo.mongodb.net/"
 DB_NAME = "cardio_database"
 COLLECTION_NAME = "cardio_info"
 BATCH_COLLECTION = "upload_batches"
 
 def get_mongo_client():
-    """Get MongoDB client connection"""
-    return MongoClient(MONGO_URI)
+    """Get MongoDB client connection with improved SSL handling"""
+    try:
+        # Ensure you're using the full connection string with database and options
+        MONGO_URI = "mongodb+srv://jssozi:J0788565007ynn@default-cluster.tzizffo.mongodb.net/cardio_database"
+        
+        # Create client with more robust SSL and connection settings
+        client = MongoClient(
+            MONGO_URI,
+            server_api=ServerApi('1'),
+            # SSL/TLS configuration
+            tls=True,
+            tlsAllowInvalidCertificates=False,
+            tlsInsecure=False,
+            # Increased timeout settings
+            socketTimeoutMS=30000,
+            connectTimeoutMS=30000,
+            serverSelectionTimeoutMS=30000
+        )
+        
+        # Verify the connection
+        client.admin.command('ping')
+        return client
+    
+    except pymongo.errors.ConfigurationError as config_err:
+        print(f"Configuration Error: {config_err}")
+        raise
+    except pymongo.errors.NetworkTimeout as net_err:
+        print(f"Network Timeout Error: {net_err}")
+        raise
+    except Exception as e:
+        print(f"Unexpected error connecting to MongoDB: {e}")
+        raise
 
 def ensure_db_exists():
     """Ensure indexes and connections are properly set up"""
-    client = get_mongo_client()
-    db = client[DB_NAME]
-    
-    # Create indexes for better query performance
-    db[COLLECTION_NAME].create_index("used_for_training")
-    db[COLLECTION_NAME].create_index("risk_level")
-    db[COLLECTION_NAME].create_index("upload_date")
-    
-    # Close the connection
-    client.close()
+    try:
+            client = get_mongo_client()
+            db = client[DB_NAME]
+            
+            # Create indexes for better query performance
+            db[COLLECTION_NAME].create_index("used_for_training", background=True)
+            db[COLLECTION_NAME].create_index("risk_level", background=True)
+            db[COLLECTION_NAME].create_index("upload_date", background=True)
+            
+            # Close the connection
+            client.close()
+    except Exception as e:
+        print(f"Error in ensure_db_exists: {e}")
+        raise
 
 def import_csv_to_db(csv_path, delimiter=";"):
     """
