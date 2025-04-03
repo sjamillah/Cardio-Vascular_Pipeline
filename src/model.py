@@ -256,40 +256,32 @@ def fine_tune_model(
 
 def load_latest_model():
     """
-    Load the latest available model
+    Load the specific model_rmsprop.pkl from MODELS_DIR for retraining and prediction
     
     Returns:
         keras.Model: Loaded model
     """
-    # First check for timestamped models
-    if os.path.exists(MODELS_DIR):
-        model_files = [f for f in os.listdir(MODELS_DIR) if f.endswith('.h5') and f.startswith('cardio_model_')]
-        if model_files:
-            # Sort by timestamp (newest first)
-            model_files.sort(reverse=True)
-            latest_model_path = os.path.join(MODELS_DIR, model_files[0])
-            logger.info(f"Loading latest model: {latest_model_path}")
-            return tf.keras.models.load_model(latest_model_path)
+    model_path = os.path.join(MODELS_DIR, 'model_rmsprop.pkl')
     
-    # Fall back to the original model paths
-    model_paths = [
-        os.path.join(MODELS_DIR, 'model_rmsprop.h5'),
-        os.path.join(MODELS_DIR, 'model_rmsprop.pkl'),
-        '../models/model_rmsprop.h5',
-        '../models/model_rmsprop.pkl',
-        'models/model_rmsprop.h5',
-        'models/model_rmsprop.pkl'
-    ]
+    if not os.path.exists(model_path):
+        logger.error(f"Model file not found at {model_path}")
+        raise FileNotFoundError(f"Model file not found at {model_path}")
+    
+    try:
+        # Load the model using joblib since it's a .pkl file
+        model = joblib.load(model_path)
+        logger.info(f"Loaded model from: {model_path}")
+        
+        # Recompile the model to ensure metrics are built
+        model.compile(
+            optimizer=RMSprop(learning_rate=0.001),  # Match original optimizer
+            loss='sparse_categorical_crossentropy',
+            metrics=['accuracy']
+        )
+        logger.info(f"Model recompiled successfully")
+        return model
+    
+    except Exception as e:
+        logger.error(f"Error loading model from {model_path}: {e}")
+        raise FileNotFoundError(f"Error loading model from {model_path}: {str(e)}")
 
-    for path in model_paths:
-        try:
-            logger.info(f"Trying to load model from: {path}")
-            if path.endswith('.h5'):
-                return tf.keras.models.load_model(path)
-            elif path.endswith('.pkl'):
-                return joblib.load(path)
-        except Exception as e:
-            logger.warning(f"Could not load model from {path}: {e}")
-            continue
-
-    raise FileNotFoundError("No trained model found. Train a model first.")

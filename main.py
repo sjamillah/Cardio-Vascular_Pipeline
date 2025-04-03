@@ -13,6 +13,9 @@ import joblib
 from pathlib import Path
 import traceback
 
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
 # Configure logging with proper formatting
 logging.basicConfig(
     level=logging.INFO,
@@ -269,24 +272,19 @@ async def predict(
 @app.post("/retrain")
 async def retrain_model(data: RetrainingData):
     """
-    Retrain the existing model (model_rmsprop.pkl) with new patient data
+    Retrain the existing model_rmsprop.pkl with new patient data
     
     Args:
         data (RetrainingData): Training data including patients and labels
     
     Returns:
-        dict: Retraining results with message, accuracy, and loss only
+        dict: Retraining results with message, accuracy, and loss
     """
     logger.info(f"Processing retraining request with {len(data.patients)} new samples")
     
     try:
-        # Convert the input data to a DataFrame
-        patient_records = []
-        for patient, label in zip(data.patients, data.labels):
-            patient_dict = patient.dict()
-            patient_dict['risk_level'] = label
-            patient_records.append(patient_dict)
-        
+        # Convert input data to DataFrame
+        patient_records = [patient.dict() | {'risk_level': label} for patient, label in zip(data.patients, data.labels)]
         new_data_df = pd.DataFrame(patient_records)
         
         # Load existing training data if available
@@ -294,105 +292,65 @@ async def retrain_model(data: RetrainingData):
             data_path = find_data_file('cardio_train.csv')
             logger.info(f"Using existing data from: {data_path}")
             X_existing, Y_existing = load_and_preprocess_data(data_path, is_file=True, drop_first=False)
-            logger.info(f"Existing data processed with shape: {X_existing.shape}")
         except FileNotFoundError:
             logger.warning("No existing training data found, using only new data")
             X_existing, Y_existing = None, None
         
         # Preprocess new data
         X_new, Y_new = load_and_preprocess_data(new_data_df, is_file=False, drop_first=False)
-        logger.info(f"New data processed with shape: {X_new.shape}")
         
-        # Combine datasets if existing data is available
+        # Combine datasets
         if X_existing is not None and Y_existing is not None:
             all_columns = set(X_existing.columns) | set(X_new.columns)
             for col in all_columns:
                 if col not in X_existing.columns:
-                    logger.info(f"Adding missing column {col} to existing data")
                     X_existing[col] = 0
                 if col not in X_new.columns:
-                    logger.info(f"Adding missing column {col} to new data")
                     X_new[col] = 0
-            
             feature_columns = sorted(list(all_columns))
-            X_existing = X_existing[feature_columns]
-            X_new = X_new[feature_columns]
-            X_combined = pd.concat([X_existing, X_new], axis=0)
+            X_combined = pd.concat([X_existing[feature_columns], X_new[feature_columns]], axis=0)
             Y_combined = pd.concat([Y_existing, Y_new], axis=0)
         else:
             X_combined = X_new
             Y_combined = Y_new
         
-        logger.info(f"Combined data shape: {X_combined.shape}")
-        logger.info(f"Feature count: {len(X_combined.columns)}")
-        
         # Scale and split data
-        X_train, X_val, X_test, Y_train, Y_val, Y_test, scaler = scale_and_split_data(
-            X_combined, Y_combined
-        )
-        logger.info("Data scaled and split successfully")
+        X_train, X_val, X_test, Y_train, Y_val, Y_test, scaler = scale_and_split_data(X_combined, Y_combined)
         
-        # Load the existing model
-        model_path = os.path.join(MODELS_DIR, 'model_rmsprop.pkl')
-        if not os.path.exists(model_path):
-            logger.error(f"Model file {model_path} not found")
-            raise HTTPException(status_code=404, detail=f"Model file {model_path} not found")
-        
-        try:
-            model = tf.keras.models.load_model(model_path)  # Load Keras model
-            logger.info(f"Loaded existing model from {model_path}")
-        except Exception as e:
-            logger.error(f"Error loading model: {e}")
-            raise HTTPException(status_code=500, detail=f"Error loading model: {str(e)}")
+        # Load the specific model
+        model = load_latest_model()  # Loads model_rmsprop.pkl
         
         # Verify input shape compatibility
-        expected_features = model.input_shape[1]
-        if X_train.shape[1] != expected_features:
-            logger.error(f"Feature count mismatch: model expects {expected_features}, got {X_train.shape[1]}")
-            raise HTTPException(
-                status_code=400,
-                detail=f"Feature count mismatch: model expects {expected_features} features, got {X_train.shape[1]}"
-            )
+        if X_train.shape[1] != model.input_shape[1]:
+            raise HTTPException(status_code=400, detail=f"Feature mismatch: expected {model.input_shape[1]}, got {X_train.shape[1]}")
         
-        # Fine-tune the loaded model
-        fine_tuned_model, history = fine_tune_model(
-            model,
-            X_train,
-            Y_train,
-            X_val,
-            Y_val,
-            is_new_model=False
-        )
-        logger.info("Model retraining completed successfully")
+        # Fine-tune the model
+        fine_tuned_model, _ = fine_tune_model(model, X_train, Y_train, X_val, Y_val, is_new_model=False)
         
         # Evaluate the model
         loss, accuracy = fine_tuned_model.evaluate(X_test, Y_test, verbose=0)
-        logger.info(f"Model evaluation: loss={loss}, accuracy={accuracy}")
         
-        # Save the retrained model
-        fine_tuned_model.save(model_path)
+        # Save the retrained model back to model_rmsprop.pkl
+        model_path = os.path.join(MODELS_DIR, 'model_rmsprop.pkl')
+        joblib.dump(fine_tuned_model, model_path)
         logger.info(f"Retrained model saved to {model_path}")
         
         # Add new records to the database
         try:
             for record in patient_records:
                 add_single_record(record)
-            logger.info(f"Added {len(patient_records)} new records to database")
         except Exception as e:
-            logger.warning(f"Error adding records to database (model still retrained): {e}")
+            logger.warning(f"Error adding records to database: {e}")
         
-        # Return only message, accuracy, and loss
         return {
             "message": "Model retrained successfully",
             "accuracy": float(accuracy),
             "loss": float(loss)
         }
-    
     except HTTPException as e:
         raise
     except Exception as e:
         logger.error(f"Unexpected error during retraining: {e}")
-        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @app.get("/visualize/{feature_name}")
