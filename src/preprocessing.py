@@ -134,7 +134,7 @@ def load_and_preprocess_data(data_source, is_file=True, drop_first=True):
 # Update this function in your preprocessing.py
 def preprocess_single_datapoint(data_dict):
     """
-    Preprocess a single datapoint for prediction
+    Preprocess a single datapoint for prediction using the trained model expecting 14 features
     
     Args:
         data_dict (dict): Dictionary with input data features
@@ -143,17 +143,13 @@ def preprocess_single_datapoint(data_dict):
         np.array: Preprocessed data ready for prediction
     """
     try:
-        # Create a one-row dataframe from the input dictionary
         df = pd.DataFrame([data_dict])
-        
-        # Define the set of relevant features
         relevant_features = [
             'age', 'height', 'weight', 'gender', 'ap_hi', 'ap_lo',
             'cholesterol', 'gluc', 'cultural_belief_score',
             'treatment_adherence', 'distance_to_healthcare'
         ]
         
-        # Ensure all required features exist in input
         for feature in relevant_features:
             if feature not in df.columns:
                 logger.warning(f"Missing feature: {feature}. Adding with default values.")
@@ -166,58 +162,51 @@ def preprocess_single_datapoint(data_dict):
                 else:
                     df[feature] = 0
         
-        # Convert numeric columns to float explicitly
         numeric_cols = ['age', 'height', 'weight', 'gender', 'ap_hi', 'ap_lo', 'cholesterol', 'gluc']
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce', downcast='float')
 
-        # Use pd.get_dummies with drop_first=False to match training data
+        # Use drop_first=True to match the trained model's 14 features
         df_encoded = pd.get_dummies(df, columns=[
             'cultural_belief_score', 
             'treatment_adherence', 
             'distance_to_healthcare'
-        ], drop_first=False)
+        ], drop_first=True)
         
-        # Expected columns after one-hot encoding (17 features)
+        # Expected columns for 14 features (matches original training with drop_first=True)
         expected_columns = [
             'age', 'height', 'weight', 'gender', 'ap_hi', 'ap_lo',
-            'cholesterol', 'gluc', 
-            'cultural_belief_score_Never', 'cultural_belief_score_Occasionally', 'cultural_belief_score_Frequently',
-            'treatment_adherence_Low', 'treatment_adherence_Medium', 'treatment_adherence_High',
-            'distance_to_healthcare_Near', 'distance_to_healthcare_Moderate', 'distance_to_healthcare_Far'
+            'cholesterol', 'gluc',
+            'cultural_belief_score_Occasionally', 'cultural_belief_score_Frequently',
+            'treatment_adherence_Medium', 'treatment_adherence_High',
+            'distance_to_healthcare_Moderate', 'distance_to_healthcare_Far'
         ]
         
-        # Ensure all expected columns exist after encoding
         for col in expected_columns:
             if col not in df_encoded.columns:
                 logger.warning(f"Missing encoded column: {col}. Adding with zeros.")
                 df_encoded[col] = 0
                 
-        # Only keep expected columns in the correct order
         df_final = df_encoded[expected_columns]
-        
-        # Print shape for debugging
         df_final = df_final.astype(float)
         logger.info(f"Preprocessed data shape: {df_final.shape}, dtypes: {df_final.dtypes.to_dict()}")
         
-        # Load the scaler that was used for the training data
-        os.makedirs(MODELS_DIR, exist_ok=True)
         scaler_path = os.path.join(MODELS_DIR, 'scaler.pkl')
-        
         if os.path.exists(scaler_path):
             try:
                 scaler = joblib.load(scaler_path)
-                # Apply scaling
+                if scaler.n_features_in_ != 14:
+                    logger.error(f"Scaler expects {scaler.n_features_in_} features, but data has 14")
+                    raise ValueError(f"Scaler mismatch: expects {scaler.n_features_in_} features, got 14")
                 scaled_data = scaler.transform(df_final)
                 scaled_data = np.array(scaled_data, dtype=np.float32)
-                logger.info(f"Scaled data shape: {scaled_data.shape}, dtypes: {scaled_data.dtype}")
+                logger.info(f"Scaled data shape: {scaled_data.shape}, dtype: {scaled_data.dtype}")
                 return scaled_data
             except Exception as e:
                 logger.error(f"Error loading or applying scaler: {e}")
                 logger.warning("Using unscaled data for prediction.")
                 return np.array(df_final.values, dtype=np.float32)
         else:
-            # If no scaler found, return the raw data
             logger.warning(f"No scaler found at path: {scaler_path}. Using unscaled data for prediction.")
             return np.array(df_final.values, dtype=np.float32)
     except Exception as e:

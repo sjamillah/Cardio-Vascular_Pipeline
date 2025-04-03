@@ -272,7 +272,7 @@ async def predict(
 @app.post("/retrain")
 async def retrain_model(data: RetrainingData):
     """
-    Retrain the existing model_rmsprop.pkl with new patient data
+    Retrain the existing model_rmsprop.pkl with one feature from uploaded bulk data
     
     Args:
         data (RetrainingData): Training data including patients and labels
@@ -287,28 +287,29 @@ async def retrain_model(data: RetrainingData):
         patient_records = [patient.dict() | {'risk_level': label} for patient, label in zip(data.patients, data.labels)]
         new_data_df = pd.DataFrame(patient_records)
         
+        # Select one feature (e.g., 'ap_hi') for retraining
+        selected_feature = 'ap_hi'  # Adjust this as needed
+        logger.info(f"Using feature '{selected_feature}' for retraining")
+        new_data_df = new_data_df[[selected_feature, 'risk_level']]
+        
         # Load existing training data if available
         try:
             data_path = find_data_file('cardio_train.csv')
             logger.info(f"Using existing data from: {data_path}")
-            X_existing, Y_existing = load_and_preprocess_data(data_path, is_file=True, drop_first=False)
+            X_existing_full, Y_existing = load_and_preprocess_data(data_path, is_file=True, drop_first=True)
+            # Reduce to the selected feature
+            X_existing = X_existing_full[[selected_feature]]
         except FileNotFoundError:
             logger.warning("No existing training data found, using only new data")
             X_existing, Y_existing = None, None
         
-        # Preprocess new data
-        X_new, Y_new = load_and_preprocess_data(new_data_df, is_file=False, drop_first=False)
+        # Preprocess new data with the selected feature
+        X_new = new_data_df[[selected_feature]]
+        Y_new = new_data_df['risk_level']
         
         # Combine datasets
         if X_existing is not None and Y_existing is not None:
-            all_columns = set(X_existing.columns) | set(X_new.columns)
-            for col in all_columns:
-                if col not in X_existing.columns:
-                    X_existing[col] = 0
-                if col not in X_new.columns:
-                    X_new[col] = 0
-            feature_columns = sorted(list(all_columns))
-            X_combined = pd.concat([X_existing[feature_columns], X_new[feature_columns]], axis=0)
+            X_combined = pd.concat([X_existing, X_new], axis=0)
             Y_combined = pd.concat([Y_existing, Y_new], axis=0)
         else:
             X_combined = X_new
@@ -317,12 +318,13 @@ async def retrain_model(data: RetrainingData):
         # Scale and split data
         X_train, X_val, X_test, Y_train, Y_val, Y_test, scaler = scale_and_split_data(X_combined, Y_combined)
         
-        # Load the specific model
-        model = load_latest_model()  # Loads model_rmsprop.pkl
+        # Load the existing model
+        model = load_latest_model()
         
-        # Verify input shape compatibility
-        if X_train.shape[1] != model.input_shape[1]:
-            raise HTTPException(status_code=400, detail=f"Feature mismatch: expected {model.input_shape[1]}, got {X_train.shape[1]}")
+        # Build a new model with 1 feature if the existing model doesn’t match
+        if model.input_shape[1] != 1:
+            logger.warning(f"Model expects {model.input_shape[1]} features, but retraining with 1 feature. Building new model.")
+            model = build_new_model(input_shape=1, num_classes=3)  # Adjust num_classes if needed
         
         # Fine-tune the model
         fine_tuned_model, _ = fine_tune_model(model, X_train, Y_train, X_val, Y_val, is_new_model=False)
@@ -330,12 +332,12 @@ async def retrain_model(data: RetrainingData):
         # Evaluate the model
         loss, accuracy = fine_tuned_model.evaluate(X_test, Y_test, verbose=0)
         
-        # Save the retrained model back to model_rmsprop.pkl
+        # Save the retrained model
         model_path = os.path.join(MODELS_DIR, 'model_rmsprop.pkl')
         joblib.dump(fine_tuned_model, model_path)
         logger.info(f"Retrained model saved to {model_path}")
         
-        # Add new records to the database
+        # Add new records to the database (optional, keep all features)
         try:
             for record in patient_records:
                 add_single_record(record)
@@ -403,9 +405,9 @@ async def visualize_feature_importance():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload_data")
-async def upload_data(file: UploadFile = File(...)):
+async def upload_data(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
     """
-    Upload CSV data file for training or prediction
+    Upload CSV data file and trigger retraining with one feature
     
     Args:
         file (UploadFile): CSV file to upload
@@ -414,46 +416,40 @@ async def upload_data(file: UploadFile = File(...)):
         dict: Upload results
     """
     try:
-        # Validate file extension
         if not file.filename.endswith('.csv'):
-            raise HTTPException(
-                status_code=400, 
-                detail="Only CSV files are supported"
-            )
+            raise HTTPException(status_code=400, detail="Only CSV files are supported")
         
-        # Create uploads directory if it doesn't exist
-        os.makedirs(UPLOADS_DIR, exist_ok=True)
-        
-        # Save uploaded file with secure filename
         file_path = os.path.join(UPLOADS_DIR, file.filename)
-        
-        # Write file
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
         logger.info(f"File saved to: {file_path}")
         
-        # Try to import to database
+        # Import to database
         try:
             records_imported = import_csv_to_db(file_path)
             logger.info(f"Imported {records_imported} records to database")
         except Exception as e:
             logger.warning(f"Database import failed: {e}")
-            return {
-                "filename": file.filename,
-                "path": file_path,
-                "status": "File uploaded successfully, but database import failed",
-                "error": str(e)
-            }
+            return {"filename": file.filename, "path": file_path, "status": "File uploaded, database import failed", "error": str(e)}
+        
+        # Trigger retraining with uploaded data
+        try:
+            df = pd.read_csv(file_path)
+            patients = [CardiovascularRiskInput(**row.to_dict()) for _, row in df.iterrows()]
+            labels = df['risk_level'].tolist()  # Assumes risk_level is in CSV
+            retrain_data = RetrainingData(patients=patients, labels=labels)
+            background_tasks.add_task(retrain_model, retrain_data)
+            logger.info("Scheduled retraining with uploaded data")
+        except Exception as e:
+            logger.warning(f"Failed to schedule retraining: {e}")
         
         return {
             "filename": file.filename,
             "path": file_path,
             "records_imported": records_imported,
-            "status": "File uploaded and imported successfully"
+            "status": "File uploaded and retraining scheduled"
         }
     except HTTPException:
-        # Re-raise HTTP exceptions
         raise
     except Exception as e:
         logger.error(f"Data upload error: {e}")

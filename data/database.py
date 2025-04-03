@@ -25,15 +25,15 @@ def get_mongo_client():
             tls=True,
             tlsCAFile=certifi.where(),
             tlsAllowInvalidCertificates=False,
-            ssl_cert_reqs=ssl.CERT_REQUIRED,
-            ssl_min_tls_version=ssl.PROTOCOL_TLSv1_2,
+            # ssl_cert_reqs=ssl.CERT_REQUIRED,
+            # ssl_min_tls_version=ssl.PROTOCOL_TLSv1_2,
             connectTimeoutMS=30000,
             socketTimeoutMS=30000,
             serverSelectionTimeoutMS=30000
         )
         
         # Simple ping test - no additional authentication required
-        client.admin.command('ping')
+        client.admin.command('ping', timeout=30)
         print(f"Connected to MongoDB! OpenSSL: {ssl.OPENSSL_VERSION}")
         return client
         
