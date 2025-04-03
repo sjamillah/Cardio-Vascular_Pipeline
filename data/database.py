@@ -9,34 +9,26 @@ import certifi
 import os
 from src.preprocessing import load_and_preprocess_data, preprocess_single_datapoint
 
-# # MongoDB connection settings
-# DB_NAME = "cardio_database"
-# COLLECTION_NAME = "cardio_info"
-# BATCH_COLLECTION = "upload_batches"
+# MongoDB connection settings
+DB_NAME = "cardio_database"
+COLLECTION_NAME = "cardio_info"
+BATCH_COLLECTION = "upload_batches"
 
 def get_mongo_client():
-    """
-    Get MongoDB client connection with enhanced SSL and debugging
-    """
     try:
-        # MongoDB connection string
-        MONGO_URI = "mongodb+srv://jssozi:J0788565007ynn@default-cluster.tzizffo.mongodb.net/cardio_database?retryWrites=true&w=majority"
+        # Update the connection string to match the error message hostnames
+        MONGO_URI = "mongodb+srv://jssozi:J0788565007ynn@ac-ti8dfyk.tzizffo.mongodb.net/cardio_database?retryWrites=true&w=majority"
         
-        # Create client with comprehensive SSL configuration
         client = MongoClient(
             MONGO_URI,
             server_api=ServerApi('1'),
-            # Use certifi for CA certificates
             tlsCAFile=certifi.where(),
-            
-            # Increased timeout and connection settings
-            socketTimeoutMS=60000,  # 60 seconds
-            connectTimeoutMS=60000,
-            serverSelectionTimeoutMS=60000,
-            
-            # Additional SSL/TLS configuration
             tls=True,
-            tlsAllowInvalidHostnames=False,
+            # Force TLS 1.2 as minimum
+            ssl_minimum_version=ssl.TLSVersion.TLSv1_2,
+            serverSelectionTimeoutMS=60000,
+            connectTimeoutMS=60000,
+            socketTimeoutMS=60000
         )
         
         # Verify the connection
@@ -44,15 +36,6 @@ def get_mongo_client():
         print("Successfully connected to MongoDB!")
         return client
     
-    except pymongo.errors.ConfigurationError as config_err:
-        print(f"Configuration Error: {config_err}")
-        raise
-    except pymongo.errors.NetworkTimeout as net_err:
-        print(f"Network Timeout Error: {net_err}")
-        raise
-    except ssl.SSLError as ssl_err:
-        print(f"SSL Error: {ssl_err}")
-        raise
     except Exception as e:
         print(f"Unexpected error connecting to MongoDB: {e}")
         raise
