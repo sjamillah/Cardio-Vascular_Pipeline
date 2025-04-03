@@ -7,7 +7,7 @@ from pymongo.server_api import ServerApi
 import ssl
 import certifi
 import os
-from src.preprocessing import load_and_preprocess_data, preprocess_single_datapoint
+import sys  # Added import
 
 # MongoDB connection settings
 DB_NAME = "cardio_database"
@@ -16,28 +16,42 @@ BATCH_COLLECTION = "upload_batches"
 
 def get_mongo_client():
     try:
-        # Update the connection string to match the error message hostnames
-        MONGO_URI = "mongodb+srv://jssozi:J0788565007ynn@ac-ti8dfyk.tzizffo.mongodb.net/cardio_database?retryWrites=true&w=majority"
+        # MongoDB connection string
+        MONGO_URI = "mongodb+srv://jssozi:Jynn@ac-ti8dfyk.tzizffo.mongodb.net/cardio_database?retryWrites=true&w=majority"
         
+        # Simplified connection options with minimal parameters
         client = MongoClient(
             MONGO_URI,
             server_api=ServerApi('1'),
+            # Only use essential TLS parameters
             tlsCAFile=certifi.where(),
-            tls=True,
-            # TLS verification settings
-            tlsAllowInvalidCertificates=False,
-            serverSelectionTimeoutMS=60000,
-            connectTimeoutMS=60000,
-            socketTimeoutMS=60000
+            # Reduced timeouts for faster failure detection
+            serverSelectionTimeoutMS=30000,
+            connectTimeoutMS=30000,
+            socketTimeoutMS=30000
         )
         
-        # Verify the connection
-        client.admin.command('ping')
+        # Test connection with a lighter command
+        client.admin.command('ismaster')
         print("Successfully connected to MongoDB!")
         return client
     
     except Exception as e:
         print(f"Unexpected error connecting to MongoDB: {e}")
+        # Print diagnostic information
+        print(f"Python version: {sys.version}")
+        print(f"PyMongo version: {pymongo.__version__}")
+        print(f"SSL/TLS version: {ssl.OPENSSL_VERSION}")
+        
+        # Try DNS lookup to verify connectivity
+        try:
+            import socket
+            hostname = "ac-ti8dfyk.tzizffo.mongodb.net"
+            ip_addresses = socket.gethostbyname_ex(hostname)
+            print(f"DNS lookup for {hostname}: {ip_addresses}")
+        except Exception as dns_error:
+            print(f"DNS lookup failed: {dns_error}")
+            
         raise
 
 def debug_ssl_connection():
@@ -50,7 +64,7 @@ def debug_ssl_connection():
 
     try:
         # Hostname and port from your MongoDB connection string
-        hostname = 'default-cluster.tzizffo.mongodb.net'
+        hostname = 'ac-ti8dfyk.tzizffo.mongodb.net'
         port = 27017
 
         # Create a socket
@@ -89,16 +103,16 @@ def debug_ssl_connection():
 def ensure_db_exists():
     """Ensure indexes and connections are properly set up"""
     try:
-            client = get_mongo_client()
-            db = client[DB_NAME]
-            
-            # Create indexes for better query performance
-            db[COLLECTION_NAME].create_index("used_for_training", background=True)
-            db[COLLECTION_NAME].create_index("risk_level", background=True)
-            db[COLLECTION_NAME].create_index("upload_date", background=True)
-            
-            # Close the connection
-            client.close()
+        client = get_mongo_client()
+        db = client[DB_NAME]
+        
+        # Create indexes for better query performance
+        db[COLLECTION_NAME].create_index("used_for_training", background=True)
+        db[COLLECTION_NAME].create_index("risk_level", background=True)
+        db[COLLECTION_NAME].create_index("upload_date", background=True)
+        
+        # Close the connection
+        client.close()
     except Exception as e:
         print(f"Error in ensure_db_exists: {e}")
         raise
