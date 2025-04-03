@@ -166,6 +166,11 @@ def preprocess_single_datapoint(data_dict):
                 else:
                     df[feature] = 0
         
+        # Convert numeric columns to float explicitly
+        numeric_cols = ['age', 'height', 'weight', 'gender', 'ap_hi', 'ap_lo', 'cholesterol', 'gluc']
+        for col in numeric_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce', downcast='float')
+
         # Use pd.get_dummies with drop_first=False to match training data
         df_encoded = pd.get_dummies(df, columns=[
             'cultural_belief_score', 
@@ -192,7 +197,8 @@ def preprocess_single_datapoint(data_dict):
         df_final = df_encoded[expected_columns]
         
         # Print shape for debugging
-        logger.info(f"Preprocessed data shape: {df_final.shape}, columns: {df_final.columns.tolist()}")
+        df_final = df_final.astype(float)
+        logger.info(f"Preprocessed data shape: {df_final.shape}, dtypes: {df_final.dtypes.to_dict()}")
         
         # Load the scaler that was used for the training data
         os.makedirs(MODELS_DIR, exist_ok=True)
@@ -203,16 +209,17 @@ def preprocess_single_datapoint(data_dict):
                 scaler = joblib.load(scaler_path)
                 # Apply scaling
                 scaled_data = scaler.transform(df_final)
-                logger.info(f"Scaled data shape: {scaled_data.shape}")
+                scaled_data = np.array(scaled_data, dtype=np.float32)
+                logger.info(f"Scaled data shape: {scaled_data.shape}, dtypes: {scaled_data.dtype}")
                 return scaled_data
             except Exception as e:
                 logger.error(f"Error loading or applying scaler: {e}")
                 logger.warning("Using unscaled data for prediction.")
-                return df_final.values
+                return np.array(df_final.values, dtype=np.float32)
         else:
             # If no scaler found, return the raw data
             logger.warning(f"No scaler found at path: {scaler_path}. Using unscaled data for prediction.")
-            return df_final.values
+            return np.array(df_final.values, dtype=np.float32)
     except Exception as e:
         logger.error(f"Error in preprocess_single_datapoint: {e}")
         raise

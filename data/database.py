@@ -40,7 +40,7 @@ def get_mongo_client():
         
         try:
             # Fallback to standard SRV connection
-            srv_uri = "mongodb+srv://jssozi:J0788565007ynn@ac-ti8dfyk.tzizffo.mongodb.net/cardio_database?retryWrites=true&w=majority"
+            srv_uri = "mongodb+srv://jssozi:Jynn@ac-ti8dfyk.tzizffo.mongodb.net/cardio_database?retryWrites=true&w=majority"
             
             # Try with absolutely minimal options
             client = MongoClient(
