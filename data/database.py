@@ -25,7 +25,7 @@ def get_mongo_client():
             tlsCAFile=certifi.where(),
             tls=True,
             # TLS verification settings
-            ssl_cert_reqs=ssl.CERT_REQUIRED,
+            tlsAllowInvalidCertificates=False,
             serverSelectionTimeoutMS=60000,
             connectTimeoutMS=60000,
             socketTimeoutMS=60000
