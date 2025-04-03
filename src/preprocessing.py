@@ -133,7 +133,8 @@ def load_and_preprocess_data(data_source, is_file=True, drop_first=True):
 
 def preprocess_single_datapoint(data_dict):
     """
-    Preprocess a single datapoint for prediction
+    Preprocess a single datapoint for prediction with fixed feature count.
+    Ensures exactly 17 features are produced to match model expectation.
     
     Args:
         data_dict (dict): Dictionary with input data features
@@ -141,40 +142,14 @@ def preprocess_single_datapoint(data_dict):
     Returns:
         np.array: Preprocessed data ready for prediction
     """
+    import traceback
     try:
         # Create a one-row dataframe from the input dictionary
         df = pd.DataFrame([data_dict])
         
-        # Define the set of relevant features we want to maintain
-        relevant_features = [
-            'age', 'height', 'weight', 'gender', 'ap_hi', 'ap_lo',
-            'cholesterol', 'gluc', 'cultural_belief_score',
-            'treatment_adherence', 'distance_to_healthcare'
-        ]
-        
-        # Ensure all required features exist in input
-        for feature in relevant_features:
-            if feature not in df.columns:
-                logger.warning(f"Missing feature: {feature}. Adding with default values.")
-                if feature == 'cultural_belief_score':
-                    df[feature] = 'Never'
-                elif feature == 'treatment_adherence':
-                    df[feature] = 'Low'
-                elif feature == 'distance_to_healthcare':
-                    df[feature] = 'Near'
-                else:
-                    df[feature] = 0
-        
-        # Use pd.get_dummies with drop_first=True to match model expectation
-        # This is crucial - this is what caused our mismatch
-        df_encoded = pd.get_dummies(df, columns=[
-            'cultural_belief_score', 
-            'treatment_adherence', 
-            'distance_to_healthcare'
-        ], drop_first=True)
-        
-        # Expected columns after one-hot encoding
-        expected_columns = [
+        # CRUCIAL FIX: We need to ensure exactly 17 features
+        # The specific features we expect in our model
+        expected_features = [
             'age', 'height', 'weight', 'gender', 'ap_hi', 'ap_lo',
             'cholesterol', 'gluc', 
             'cultural_belief_score_Occasionally', 'cultural_belief_score_Frequently',
@@ -182,39 +157,39 @@ def preprocess_single_datapoint(data_dict):
             'distance_to_healthcare_Moderate', 'distance_to_healthcare_Far'
         ]
         
-        # Ensure all expected columns exist after encoding
-        for col in expected_columns:
-            if col not in df_encoded.columns:
-                logger.warning(f"Missing encoded column: {col}. Adding with zeros.")
-                df_encoded[col] = 0
-                
-        # Only keep expected columns in the correct order
-        df_final = df_encoded[expected_columns]
+        # Process categorical features
+        # For cultural_belief_score
+        df['cultural_belief_score_Occasionally'] = (df['cultural_belief_score'] == 'Occasionally').astype(int)
+        df['cultural_belief_score_Frequently'] = (df['cultural_belief_score'] == 'Frequently').astype(int)
         
-        # Print shape for debugging
-        print(f"Preprocessed data shape: {df_final.shape}, columns: {df_final.columns.tolist()}")
+        # For treatment_adherence
+        df['treatment_adherence_Medium'] = (df['treatment_adherence'] == 'Medium').astype(int)
+        df['treatment_adherence_High'] = (df['treatment_adherence'] == 'High').astype(int)
         
-        # Load the scaler that was used for the training data
-        os.makedirs(MODELS_DIR, exist_ok=True)
-        scaler_path = os.path.join(MODELS_DIR, 'scaler.pkl')
+        # For distance_to_healthcare
+        df['distance_to_healthcare_Moderate'] = (df['distance_to_healthcare'] == 'Moderate').astype(int)
+        df['distance_to_healthcare_Far'] = (df['distance_to_healthcare'] == 'Far').astype(int)
         
-        if os.path.exists(scaler_path):
-            try:
-                scaler = joblib.load(scaler_path)
-                # Apply scaling
-                scaled_data = scaler.transform(df_final)
-                print(f"Scaled data shape: {scaled_data.shape}")
-                return scaled_data
-            except Exception as e:
-                logger.error(f"Error loading or applying scaler: {e}")
-                logger.warning("Using unscaled data for prediction.")
-                return df_final.values
-        else:
-            # If no scaler found, return the raw data
-            logger.warning("No scaler found at path: {}. Using unscaled data for prediction.".format(scaler_path))
-            return df_final.values
+        # Drop original categorical columns
+        df = df.drop(['cultural_belief_score', 'treatment_adherence', 'distance_to_healthcare'], axis=1, errors='ignore')
+        
+        # Ensure all expected features are present
+        for feature in expected_features:
+            if feature not in df.columns:
+                df[feature] = 0
+                logger.warning(f"Missing feature {feature} added with default value 0")
+        
+        # Select only the expected features in correct order
+        df_final = df[expected_features]
+        
+        # Log the shape for debugging
+        logger.info(f"Final preprocessed shape: {df_final.shape}")
+        
+        # Return numpy array
+        return df_final.values
     except Exception as e:
         logger.error(f"Error in preprocess_single_datapoint: {e}")
+        logger.error(traceback.format_exc())
         raise
 
 def scale_and_split_data(X, Y, test_size=0.3, val_size=0.2):
