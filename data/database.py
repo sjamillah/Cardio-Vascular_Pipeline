@@ -17,7 +17,7 @@ BATCH_COLLECTION = "upload_batches"
 def get_mongo_client():
     try:
         # MongoDB connection string
-        MONGO_URI = "mongodb+srv://jssozi:Jynn@ac-ti8dfyk.tzizffo.mongodb.net/cardio_database?retryWrites=true&w=majority"
+        MONGO_URI = "mongodb+srv://jssozi:J0788565007ynn@ac-ti8dfyk.tzizffo.mongodb.net/cardio_database?retryWrites=true&w=majority"
         
         # Simplified connection options with minimal parameters
         client = MongoClient(
