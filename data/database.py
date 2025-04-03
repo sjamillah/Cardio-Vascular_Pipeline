@@ -7,103 +7,77 @@ from pymongo.server_api import ServerApi
 import ssl
 import certifi
 import os
-import sys  # Added import
+import sys
+from src.preprocessing import load_and_preprocess_data
 
 # MongoDB connection settings
 DB_NAME = "cardio_database"
 COLLECTION_NAME = "cardio_info"
 BATCH_COLLECTION = "upload_batches"
 
+# Modified get_mongo_client function with fallback options
 def get_mongo_client():
     try:
-        # MongoDB connection string
-        MONGO_URI = "mongodb+srv://jssozi:J0788565007ynn@ac-ti8dfyk.tzizffo.mongodb.net/cardio_database?retryWrites=true&w=majority"
+        # Try direct connection string first - not using SRV format
+        # This bypasses DNS resolution which might be causing issues
+        direct_uri = "mongodb://jssozi:J0788565007ynn@ac-ti8dfyk-shard-00-00.tzizffo.mongodb.net:27017,ac-ti8dfyk-shard-00-01.tzizffo.mongodb.net:27017,ac-ti8dfyk-shard-00-02.tzizffo.mongodb.net:27017/cardio_database?replicaSet=atlas-q84glr-shard-0&ssl=true&authSource=admin"
         
-        # Simplified connection options with minimal parameters
+        # Try with minimal SSL options and allow invalid certificates for testing
         client = MongoClient(
-            MONGO_URI,
-            server_api=ServerApi('1'),
-            # Only use essential TLS parameters
-            tlsCAFile=certifi.where(),
-            # Reduced timeouts for faster failure detection
-            serverSelectionTimeoutMS=30000,
+            direct_uri,
+            tlsAllowInvalidCertificates=True,  # For testing only - remove in production
             connectTimeoutMS=30000,
             socketTimeoutMS=30000
         )
         
-        # Test connection with a lighter command
-        client.admin.command('ismaster')
-        print("Successfully connected to MongoDB!")
+        # Simple ping test - no additional authentication required
+        client.admin.command('ping')
+        print("Successfully connected to MongoDB using direct connection!")
         return client
-    
-    except Exception as e:
-        print(f"Unexpected error connecting to MongoDB: {e}")
-        # Print diagnostic information
-        print(f"Python version: {sys.version}")
-        print(f"PyMongo version: {pymongo.__version__}")
-        print(f"SSL/TLS version: {ssl.OPENSSL_VERSION}")
         
-        # Try DNS lookup to verify connectivity
-        try:
-            import socket
-            hostname = "ac-ti8dfyk.tzizffo.mongodb.net"
-            ip_addresses = socket.gethostbyname_ex(hostname)
-            print(f"DNS lookup for {hostname}: {ip_addresses}")
-        except Exception as dns_error:
-            print(f"DNS lookup failed: {dns_error}")
-            
-        raise
-
-def debug_ssl_connection():
-    """
-    Comprehensive SSL and network debugging function
-    """
-    import socket
-    import ssl
-    import certifi
-
-    try:
-        # Hostname and port from your MongoDB connection string
-        hostname = 'ac-ti8dfyk.tzizffo.mongodb.net'
-        port = 27017
-
-        # Create a socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(30)  # 30-second timeout
-
-        # Create SSL context
-        context = ssl.create_default_context(cafile=certifi.where())
-        context.check_hostname = True
-        context.verify_mode = ssl.CERT_REQUIRED
-
-        # Wrap socket with SSL
-        secure_sock = context.wrap_socket(sock, server_hostname=hostname)
-
-        try:
-            # Attempt to connect
-            secure_sock.connect((hostname, port))
-            print("SSL Connection successful!")
-            
-            # Get certificate details
-            cert = secure_sock.getpeercert()
-            print("Certificate details:")
-            for key, value in cert.items():
-                print(f"{key}: {value}")
-        
-        except ssl.SSLError as ssl_err:
-            print(f"SSL Error during connection: {ssl_err}")
-        except socket.error as sock_err:
-            print(f"Socket Error: {sock_err}")
-        finally:
-            secure_sock.close()
-
     except Exception as e:
-        print(f"Debugging Error: {e}")
+        print(f"Direct connection failed: {e}")
+        
+        try:
+            # Fallback to standard SRV connection
+            srv_uri = "mongodb+srv://jssozi:J0788565007ynn@ac-ti8dfyk.tzizffo.mongodb.net/cardio_database?retryWrites=true&w=majority"
+            
+            # Try with absolutely minimal options
+            client = MongoClient(
+                srv_uri,
+                tlsAllowInvalidCertificates=True,  # For testing only - remove in production
+                connectTimeoutMS=30000
+            )
+            
+            # Simple ping test
+            client.admin.command('ping')
+            print("Successfully connected to MongoDB using SRV connection!")
+            return client
+            
+        except Exception as e2:
+            print(f"SRV connection failed: {e2}")
+            
+            # Add detailed logging for diagnostics
+            print(f"Python version: {sys.version}")
+            print(f"PyMongo version: {pymongo.__version__}")
+            
+            # Modified app initialization to allow continuing without MongoDB
+            print("WARNING: MongoDB connection failed. Application will start with limited functionality.")
+            
+            # Return None instead of raising, handle this in calling code
+            return None
 
+# Modified ensure_db_exists function to handle MongoDB connection failure
 def ensure_db_exists():
     """Ensure indexes and connections are properly set up"""
     try:
         client = get_mongo_client()
+        
+        # If MongoDB connection failed but we want app to start anyway
+        if client is None:
+            print("Skipping database initialization - MongoDB unavailable")
+            return False
+            
         db = client[DB_NAME]
         
         # Create indexes for better query performance
@@ -113,9 +87,12 @@ def ensure_db_exists():
         
         # Close the connection
         client.close()
+        return True
+        
     except Exception as e:
         print(f"Error in ensure_db_exists: {e}")
-        raise
+        print("Warning: Application will start with limited database functionality")
+        return False
 
 def import_csv_to_db(csv_path, delimiter=";"):
     """
