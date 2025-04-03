@@ -146,7 +146,7 @@ def preprocess_single_datapoint(data_dict):
         # Create a one-row dataframe from the input dictionary
         df = pd.DataFrame([data_dict])
         
-        # Define the set of relevant features we want to maintain
+        # Define the set of relevant features
         relevant_features = [
             'age', 'height', 'weight', 'gender', 'ap_hi', 'ap_lo',
             'cholesterol', 'gluc', 'cultural_belief_score',
@@ -166,21 +166,20 @@ def preprocess_single_datapoint(data_dict):
                 else:
                     df[feature] = 0
         
-        # Use pd.get_dummies with drop_first=True to match model expectation
-        # This is crucial - this is what caused our mismatch
+        # Use pd.get_dummies with drop_first=False to match training data
         df_encoded = pd.get_dummies(df, columns=[
             'cultural_belief_score', 
             'treatment_adherence', 
             'distance_to_healthcare'
-        ], drop_first=True)
+        ], drop_first=False)
         
-        # Expected columns after one-hot encoding
+        # Expected columns after one-hot encoding (17 features)
         expected_columns = [
             'age', 'height', 'weight', 'gender', 'ap_hi', 'ap_lo',
             'cholesterol', 'gluc', 
-            'cultural_belief_score_Occasionally', 'cultural_belief_score_Frequently',
-            'treatment_adherence_Medium', 'treatment_adherence_High',
-            'distance_to_healthcare_Moderate', 'distance_to_healthcare_Far'
+            'cultural_belief_score_Never', 'cultural_belief_score_Occasionally', 'cultural_belief_score_Frequently',
+            'treatment_adherence_Low', 'treatment_adherence_Medium', 'treatment_adherence_High',
+            'distance_to_healthcare_Near', 'distance_to_healthcare_Moderate', 'distance_to_healthcare_Far'
         ]
         
         # Ensure all expected columns exist after encoding
@@ -193,7 +192,7 @@ def preprocess_single_datapoint(data_dict):
         df_final = df_encoded[expected_columns]
         
         # Print shape for debugging
-        print(f"Preprocessed data shape: {df_final.shape}, columns: {df_final.columns.tolist()}")
+        logger.info(f"Preprocessed data shape: {df_final.shape}, columns: {df_final.columns.tolist()}")
         
         # Load the scaler that was used for the training data
         os.makedirs(MODELS_DIR, exist_ok=True)
@@ -204,7 +203,7 @@ def preprocess_single_datapoint(data_dict):
                 scaler = joblib.load(scaler_path)
                 # Apply scaling
                 scaled_data = scaler.transform(df_final)
-                print(f"Scaled data shape: {scaled_data.shape}")
+                logger.info(f"Scaled data shape: {scaled_data.shape}")
                 return scaled_data
             except Exception as e:
                 logger.error(f"Error loading or applying scaler: {e}")
@@ -212,7 +211,7 @@ def preprocess_single_datapoint(data_dict):
                 return df_final.values
         else:
             # If no scaler found, return the raw data
-            logger.warning("No scaler found at path: {}. Using unscaled data for prediction.".format(scaler_path))
+            logger.warning(f"No scaler found at path: {scaler_path}. Using unscaled data for prediction.")
             return df_final.values
     except Exception as e:
         logger.error(f"Error in preprocess_single_datapoint: {e}")

@@ -228,80 +228,33 @@ async def predict(
     save_to_db: Optional[bool] = False,
     background_tasks: BackgroundTasks = None
 ):
-    """
-    Predict cardiovascular risk for a single patient
-    
-    Args:
-        patient (CardiovascularRiskInput): Patient data
-        save_to_db (bool, optional): Whether to save prediction to database
-        background_tasks (BackgroundTasks): FastAPI background tasks
-    
-    Returns:
-        dict: Prediction results
-    """
     logger.info("Processing prediction request")
     
     try:
         # Load the latest model
-        try:
-            model = load_latest_model()
-            logger.info("Model loaded successfully")
-            
-            # Get the expected input shape from the model
-            expected_shape = model.input_shape[1]
-            logger.info(f"Model expects input shape with {expected_shape} features")
-        except FileNotFoundError:
-            logger.error("No trained model found")
-            raise HTTPException(
-                status_code=404, 
-                detail="No trained model found. Please train a model first."
-            )
+        model = load_latest_model()
+        expected_shape = model.input_shape[1]  # Should be 17
+        logger.info(f"Model expects input shape with {expected_shape} features")
         
-        # Prepare input data for preprocessing
+        # Prepare and preprocess input data
         input_data = patient.dict()
+        input_scaled = preprocess_single_datapoint(input_data)
+        logger.info(f"Data preprocessed successfully with shape {input_scaled.shape}")
         
-        # Preprocess input
-        try:
-            input_scaled = preprocess_single_datapoint(input_data)
-            logger.info(f"Data preprocessed successfully with shape {input_scaled.shape}")
-            
-            # Verify input shape matches model expectation
-            if input_scaled.shape[1] != expected_shape:
-                logger.error(f"Input shape mismatch: model expects {expected_shape} features, got {input_scaled.shape[1]}")
-                raise ValueError(f"Input shape mismatch: model expects {expected_shape} features, got {input_scaled.shape[1]}")
-        except Exception as e:
-            logger.error(f"Error preprocessing input: {e}")
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Error preprocessing input data: {str(e)}"
-            )
+        # Verify input shape matches model expectation
+        if input_scaled.shape[1] != expected_shape:
+            logger.error(f"Input shape mismatch: model expects {expected_shape} features, got {input_scaled.shape[1]}")
+            raise ValueError(f"Input shape mismatch: model expects {expected_shape} features, got {input_scaled.shape[1]}")
         
-        # Predict with proper error handling
-        try:
-            # Ensure input is properly shaped for prediction
-            predictions = model.predict(input_scaled)
-            if len(model.output_shape) > 1 and model.output_shape[1] > 1:
-                # Multi-class output (softmax)
-                risk_level = np.argmax(predictions[0])
-                risk_prob = predictions[0][risk_level]
-            else:
-                # Binary output
-                risk_prob = predictions[0][0]
-                risk_level = 2 if risk_prob > 0.7 else (1 if risk_prob > 0.3 else 0)
-            logger.info(f"Prediction successful: risk_prob={risk_prob}, risk_level={risk_level}")
-        except Exception as e:
-            logger.error(f"Error during prediction: {e}")
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Error during prediction: {str(e)}"
-            )
+        # Make prediction
+        predictions = model.predict(input_scaled)
+        risk_level = np.argmax(predictions[0])
+        risk_prob = predictions[0][risk_level]
         
         # Optionally save to database
         if save_to_db and background_tasks:
-            # Add the predicted risk level to the input data
             input_data['risk_level'] = risk_level
             background_tasks.add_task(add_single_record, input_data)
-            logger.info("Added background task to save prediction to database")
         
         return {
             "risk_probability": float(risk_prob),
@@ -309,13 +262,9 @@ async def predict(
             "risk_category": ["Low", "Medium", "High"][risk_level],
             "interpretation": _interpret_risk(risk_prob)
         }
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
     except Exception as e:
-        logger.error(f"Unexpected error during prediction: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+        logger.error(f"Error during prediction: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error during prediction: {str(e)}")
 
 @app.post("/retrain")
 async def retrain_model(data: RetrainingData):
