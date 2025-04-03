@@ -24,8 +24,8 @@ def get_mongo_client():
             server_api=ServerApi('1'),
             tlsCAFile=certifi.where(),
             tls=True,
-            # Force TLS 1.2 as minimum
-            ssl_minimum_version=ssl.TLSVersion.TLSv1_2,
+            # TLS verification settings
+            ssl_cert_reqs=ssl.CERT_REQUIRED,
             serverSelectionTimeoutMS=60000,
             connectTimeoutMS=60000,
             socketTimeoutMS=60000
