@@ -248,7 +248,7 @@ async def predict(
             logger.info("Model loaded successfully")
             
             # Get the expected input shape from the model
-            expected_shape = model.layers[0].input_shape[1]
+            expected_shape = model.input_shape[1]
             logger.info(f"Model expects input shape with {expected_shape} features")
         except FileNotFoundError:
             logger.error("No trained model found")
@@ -278,26 +278,16 @@ async def predict(
         
         # Predict with proper error handling
         try:
-            # Get the model output shape to handle different model formats
-            if hasattr(model, 'output_shape'):
-                # For TensorFlow models
-                if len(model.output_shape) > 1 and model.output_shape[1] > 1:
-                    # Multi-class output (softmax)
-                    predictions = model.predict(input_scaled)
-                    risk_level = np.argmax(predictions[0])
-                    risk_prob = predictions[0][risk_level]
-                else:
-                    # Binary output
-                    risk_prob = model.predict(input_scaled)[0][0]
-                    risk_level = 2 if risk_prob > 0.7 else (1 if risk_prob > 0.3 else 0)
+            # Ensure input is properly shaped for prediction
+            predictions = model.predict(input_scaled)
+            if len(model.output_shape) > 1 and model.output_shape[1] > 1:
+                # Multi-class output (softmax)
+                risk_level = np.argmax(predictions[0])
+                risk_prob = predictions[0][risk_level]
             else:
-                # For scikit-learn models
-                risk_level = model.predict(input_scaled)[0]
-                if hasattr(model, 'predict_proba'):
-                    risk_prob = np.max(model.predict_proba(input_scaled)[0])
-                else:
-                    risk_prob = 0.5  # Default if no probability available
-                    
+                # Binary output
+                risk_prob = predictions[0][0]
+                risk_level = 2 if risk_prob > 0.7 else (1 if risk_prob > 0.3 else 0)
             logger.info(f"Prediction successful: risk_prob={risk_prob}, risk_level={risk_level}")
         except Exception as e:
             logger.error(f"Error during prediction: {e}")
