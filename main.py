@@ -269,13 +269,13 @@ async def predict(
 @app.post("/retrain")
 async def retrain_model(data: RetrainingData):
     """
-    Retrain the model with new patient data, preserving all features
+    Retrain the existing model (model_rmsprop.pkl) with new patient data
     
     Args:
         data (RetrainingData): Training data including patients and labels
     
     Returns:
-        dict: Retraining results with accuracy and loss
+        dict: Retraining results with message, accuracy, and loss only
     """
     logger.info(f"Processing retraining request with {len(data.patients)} new samples")
     
@@ -283,30 +283,29 @@ async def retrain_model(data: RetrainingData):
         # Convert the input data to a DataFrame
         patient_records = []
         for patient, label in zip(data.patients, data.labels):
-            # Convert patient to dictionary and add label
             patient_dict = patient.dict()
             patient_dict['risk_level'] = label
             patient_records.append(patient_dict)
         
-        # Create a DataFrame from the new records
         new_data_df = pd.DataFrame(patient_records)
         
-        # Try to find the existing training data
+        # Load existing training data if available
         try:
             data_path = find_data_file('cardio_train.csv')
             logger.info(f"Using existing data from: {data_path}")
-            
-            # Load and process both datasets with drop_first=False to preserve all features
             X_existing, Y_existing = load_and_preprocess_data(data_path, is_file=True, drop_first=False)
             logger.info(f"Existing data processed with shape: {X_existing.shape}")
-            
-            X_new, Y_new = load_and_preprocess_data(new_data_df, is_file=False, drop_first=False)
-            logger.info(f"New data processed with shape: {X_new.shape}")
-            
-            # Ensure column consistency between datasets
+        except FileNotFoundError:
+            logger.warning("No existing training data found, using only new data")
+            X_existing, Y_existing = None, None
+        
+        # Preprocess new data
+        X_new, Y_new = load_and_preprocess_data(new_data_df, is_file=False, drop_first=False)
+        logger.info(f"New data processed with shape: {X_new.shape}")
+        
+        # Combine datasets if existing data is available
+        if X_existing is not None and Y_existing is not None:
             all_columns = set(X_existing.columns) | set(X_new.columns)
-            
-            # Add any missing columns to both datasets
             for col in all_columns:
                 if col not in X_existing.columns:
                     logger.info(f"Adding missing column {col} to existing data")
@@ -315,81 +314,81 @@ async def retrain_model(data: RetrainingData):
                     logger.info(f"Adding missing column {col} to new data")
                     X_new[col] = 0
             
-            # Ensure column order is the same
             feature_columns = sorted(list(all_columns))
-            
-            # Reorder columns for consistency
             X_existing = X_existing[feature_columns]
             X_new = X_new[feature_columns]
-            
-            # Combine datasets
             X_combined = pd.concat([X_existing, X_new], axis=0)
             Y_combined = pd.concat([Y_existing, Y_new], axis=0)
-            
-            logger.info(f"Combined data shape: {X_combined.shape}")
-            logger.info(f"Feature count: {len(feature_columns)}")
-            
-            # Perform scaling and splitting
-            X_train, X_val, X_test, Y_train, Y_val, Y_test, scaler = scale_and_split_data(
-                X_combined, Y_combined
-            )
-            logger.info("Data scaled and split successfully")
-            
-            # Build a new model that can handle all features
-            input_feature_count = X_train.shape[1]
-            logger.info(f"Building new model with input shape: {input_feature_count}")
-            
-            new_model = build_new_model(input_feature_count)
-            
-            # Train the new model
-            fine_tuned_model, history = fine_tune_model(
-                new_model,
-                X_train,
-                Y_train,
-                X_val,
-                Y_val,
-                is_new_model=True
-            )
-            logger.info("Model training completed successfully")
-            
-            # Evaluate the model
-            loss, accuracy = fine_tuned_model.evaluate(X_test, Y_test, verbose=0)
-            logger.info(f"Model evaluation: loss={loss}, accuracy={accuracy}")
-            
-            # Add the new records to the database
-            try:
-                for record in patient_records:
-                    add_single_record(record)
-                logger.info(f"Added {len(patient_records)} new records to database")
-            except Exception as e:
-                logger.warning(f"Error adding records to database (model still retrained): {e}")
-            
-            return {
-                "message": "Model retrained successfully with all features preserved",
-                "num_samples": len(data.patients),
-                "accuracy": float(accuracy),
-                "loss": float(loss),
-                "feature_count": input_feature_count,
-                "history": {
-                    "loss": [float(val) for val in history.history.get('loss', [])],
-                    "val_loss": [float(val) for val in history.history.get('val_loss', [])],
-                    "accuracy": [float(val) for val in history.history.get('accuracy', [])],
-                    "val_accuracy": [float(val) for val in history.history.get('val_accuracy', [])]
-                }
-            }
-            
-        except FileNotFoundError:
-            logger.error("No existing training data found")
+        else:
+            X_combined = X_new
+            Y_combined = Y_new
+        
+        logger.info(f"Combined data shape: {X_combined.shape}")
+        logger.info(f"Feature count: {len(X_combined.columns)}")
+        
+        # Scale and split data
+        X_train, X_val, X_test, Y_train, Y_val, Y_test, scaler = scale_and_split_data(
+            X_combined, Y_combined
+        )
+        logger.info("Data scaled and split successfully")
+        
+        # Load the existing model
+        model_path = os.path.join(MODELS_DIR, 'model_rmsprop.pkl')
+        if not os.path.exists(model_path):
+            logger.error(f"Model file {model_path} not found")
+            raise HTTPException(status_code=404, detail=f"Model file {model_path} not found")
+        
+        try:
+            model = tf.keras.models.load_model(model_path)  # Load Keras model
+            logger.info(f"Loaded existing model from {model_path}")
+        except Exception as e:
+            logger.error(f"Error loading model: {e}")
+            raise HTTPException(status_code=500, detail=f"Error loading model: {str(e)}")
+        
+        # Verify input shape compatibility
+        expected_features = model.input_shape[1]
+        if X_train.shape[1] != expected_features:
+            logger.error(f"Feature count mismatch: model expects {expected_features}, got {X_train.shape[1]}")
             raise HTTPException(
-                status_code=404, 
-                detail="No existing training data found. Please upload training data first."
+                status_code=400,
+                detail=f"Feature count mismatch: model expects {expected_features} features, got {X_train.shape[1]}"
             )
-            
-    except ValueError as e:
-        logger.error(f"Value error during retraining: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except HTTPException:
-        # Re-raise HTTP exceptions
+        
+        # Fine-tune the loaded model
+        fine_tuned_model, history = fine_tune_model(
+            model,
+            X_train,
+            Y_train,
+            X_val,
+            Y_val,
+            is_new_model=False
+        )
+        logger.info("Model retraining completed successfully")
+        
+        # Evaluate the model
+        loss, accuracy = fine_tuned_model.evaluate(X_test, Y_test, verbose=0)
+        logger.info(f"Model evaluation: loss={loss}, accuracy={accuracy}")
+        
+        # Save the retrained model
+        fine_tuned_model.save(model_path)
+        logger.info(f"Retrained model saved to {model_path}")
+        
+        # Add new records to the database
+        try:
+            for record in patient_records:
+                add_single_record(record)
+            logger.info(f"Added {len(patient_records)} new records to database")
+        except Exception as e:
+            logger.warning(f"Error adding records to database (model still retrained): {e}")
+        
+        # Return only message, accuracy, and loss
+        return {
+            "message": "Model retrained successfully",
+            "accuracy": float(accuracy),
+            "loss": float(loss)
+        }
+    
+    except HTTPException as e:
         raise
     except Exception as e:
         logger.error(f"Unexpected error during retraining: {e}")
