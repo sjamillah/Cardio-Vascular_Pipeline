@@ -27,7 +27,7 @@ try:
     from src.preprocessing import (
         load_and_preprocess_data, 
         preprocess_single_datapoint, 
-        scale_and_split_data,
+        scale_and_split_data
 
     )
     from src.model import fine_tune_model, load_latest_model, build_new_model
@@ -580,6 +580,7 @@ if __name__ == "__main__":
             logger.warning(f"Uploads directory not found. Creating: {UPLOADS_DIR}")
             os.makedirs(UPLOADS_DIR, exist_ok=True)
         
+        # Only run the uvicorn server when executed directly (not via Gunicorn)
         logger.info("Starting Cardiovascular Risk Prediction API server")
         uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
     except Exception as e:
