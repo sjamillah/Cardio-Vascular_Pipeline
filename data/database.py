@@ -20,7 +20,7 @@ def get_mongo_client():
     """
     try:
         # MongoDB connection string
-        MONGO_URI = "mongodb+srv://jssozi:Jynn@default-cluster.tzizffo.mongodb.net/cardio_database?retryWrites=true&w=majority"
+        MONGO_URI = "mongodb+srv://jssozi:J0788565007ynn@default-cluster.tzizffo.mongodb.net/cardio_database?retryWrites=true&w=majority"
         
         # Create client with comprehensive SSL configuration
         client = MongoClient(
