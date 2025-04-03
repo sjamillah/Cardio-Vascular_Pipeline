@@ -23,10 +23,6 @@ def get_mongo_client():
         client = MongoClient(
             MONGO_URI,
             server_api=ServerApi('1'),
-            # SSL/TLS configuration
-            tls=True,
-            tlsAllowInvalidCertificates=False,
-            tlsInsecure=False,
             # Increased timeout settings
             socketTimeoutMS=30000,
             connectTimeoutMS=30000,
