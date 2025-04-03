@@ -1,10 +1,10 @@
 # Chronic Disease Management System
 
 ## Demo Video
-[Insert YouTube Link Here]
+[[YouTube]](https://youtu.be/K-ivPbrrKIM)
 
 ## Mobile App Link
-[Insert Deployed Application URL Here]
+[[Cardio Mobile App]](https://github.com/sjamillah/cardio_mobile_app.git)
 
 ## Project Description
 
