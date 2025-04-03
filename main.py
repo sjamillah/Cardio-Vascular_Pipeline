@@ -246,6 +246,10 @@ async def predict(
         try:
             model = load_latest_model()
             logger.info("Model loaded successfully")
+            
+            # Get the expected input shape from the model
+            expected_shape = model.layers[0].input_shape[1]
+            logger.info(f"Model expects input shape with {expected_shape} features")
         except FileNotFoundError:
             logger.error("No trained model found")
             raise HTTPException(
@@ -260,6 +264,11 @@ async def predict(
         try:
             input_scaled = preprocess_single_datapoint(input_data)
             logger.info(f"Data preprocessed successfully with shape {input_scaled.shape}")
+            
+            # Verify input shape matches model expectation
+            if input_scaled.shape[1] != expected_shape:
+                logger.error(f"Input shape mismatch: model expects {expected_shape} features, got {input_scaled.shape[1]}")
+                raise ValueError(f"Input shape mismatch: model expects {expected_shape} features, got {input_scaled.shape[1]}")
         except Exception as e:
             logger.error(f"Error preprocessing input: {e}")
             raise HTTPException(
@@ -269,37 +278,25 @@ async def predict(
         
         # Predict with proper error handling
         try:
-            # Try prediction and handle different model types
-            try:
-                # For models with predict method that returns probabilities directly
-                predictions = model.predict(input_scaled)
-                
-                # Check if predictions output is multi-class (multiple probabilities)
-                if len(predictions.shape) > 1 and predictions.shape[1] > 1:
+            # Get the model output shape to handle different model formats
+            if hasattr(model, 'output_shape'):
+                # For TensorFlow models
+                if len(model.output_shape) > 1 and model.output_shape[1] > 1:
                     # Multi-class output (softmax)
+                    predictions = model.predict(input_scaled)
                     risk_level = np.argmax(predictions[0])
-                    risk_prob = float(predictions[0][risk_level])
+                    risk_prob = predictions[0][risk_level]
                 else:
-                    # Binary or single-value output
-                    risk_prob = float(predictions[0][0] if len(predictions.shape) > 1 else predictions[0])
+                    # Binary output
+                    risk_prob = model.predict(input_scaled)[0][0]
                     risk_level = 2 if risk_prob > 0.7 else (1 if risk_prob > 0.3 else 0)
-            except Exception as e:
-                logger.warning(f"Standard prediction failed, trying alternative approach: {e}")
-                
-                # Fallback for models with different output structure
-                try:
-                    # Some models may have a predict_proba method (scikit-learn style)
-                    if hasattr(model, 'predict_proba'):
-                        probs = model.predict_proba(input_scaled)
-                        risk_level = model.predict(input_scaled)[0]
-                        risk_prob = float(np.max(probs[0]))
-                    else:
-                        # Last resort - just get a prediction and use a default probability
-                        risk_level = int(model.predict(input_scaled)[0])
-                        risk_prob = 0.5  # Default probability
-                except Exception as e2:
-                    logger.error(f"Alternative prediction attempt also failed: {e2}")
-                    raise Exception(f"Could not make prediction: {e2}. Original error: {e}")
+            else:
+                # For scikit-learn models
+                risk_level = model.predict(input_scaled)[0]
+                if hasattr(model, 'predict_proba'):
+                    risk_prob = np.max(model.predict_proba(input_scaled)[0])
+                else:
+                    risk_prob = 0.5  # Default if no probability available
                     
             logger.info(f"Prediction successful: risk_prob={risk_prob}, risk_level={risk_level}")
         except Exception as e:
